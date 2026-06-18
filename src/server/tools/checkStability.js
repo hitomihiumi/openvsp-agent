@@ -3,58 +3,74 @@ import { getPythonScriptPath } from '../../utils/paths.js';
 import { getDesignStore } from '../../utils/designStore.js';
 
 export async function checkStability(params) {
-  console.log(`[Stability] Starting for ${params.designId}`);
+    console.log('[checkStability] called for', params.designId);
 
-  return new Promise((resolve) => {
-    const scriptPath = getPythonScriptPath('check_stability.py');
-    const inputJson = JSON.stringify({ ...params }, null, 2);
+    const store  = getDesignStore();
+    const stored = store[params.designId] || {};
+    const vspFile = params.vspFile || stored.vspFile;
+    const runDir  = params.runDir  || stored.runDir;
+    const p       = stored.parameters || {};
 
-    const proc = execFile(
-        'python',
-        [scriptPath],
-        { timeout: 60000, maxBuffer: 50 * 1024 * 1024 },
-        (error, stdout, stderr) => {
-            let result = null;
+    const enrichedParams = {
+        ...params,
+        vspFile,
+        runDir,
+        wingArea:     params.wingArea     || p.wingArea,
+        wingspan:     params.wingspan     || p.wingspan,
+        wingChord:    params.wingChord    || p.wingChord,
+        wingTipChord: params.wingTipChord || p.wingTipChord,
+    };
 
-            try {
-                const startIdx = stdout.indexOf('===JSON_START===');
-                const endIdx = stdout.indexOf('===JSON_END===');
-                let cleanJson = '';
+    return new Promise((resolve) => {
+        const scriptPath = getPythonScriptPath('check_stability.py');
 
-                if (startIdx !== -1 && endIdx !== -1) {
-                    cleanJson = stdout.substring(startIdx + 16, endIdx).trim();
-                } else {
-                    const jsonStart = stdout.indexOf('{');
-                    if (jsonStart !== -1) cleanJson = stdout.substring(jsonStart).trim();
+        const proc = execFile(
+            'python',
+            [scriptPath],
+            {
+                timeout:   120_000,
+                maxBuffer: 50 * 1024 * 1024,
+                cwd:       runDir || process.cwd(),
+            },
+            (error, stdout, stderr) => {
+                if (stderr) console.error('[checkStability] stderr:', stderr.slice(0, 400));
+
+                const result = extractJson(stdout);
+
+                if (result) {
+                    if (result.status === 'error') {
+                        console.error('[checkStability] Python error:', result.message);
+                        resolve(result);
+                        return;
+                    }
+                    store[params.designId] = { ...stored, stability: result };
+                    resolve(result);
+                    return;
                 }
 
-                if (cleanJson) result = JSON.parse(cleanJson);
-            } catch (err) {}
+                if (error) {
+                    console.error('[checkStability] crash/timeout:', error.message);
+                    if (process.platform === 'win32') exec('taskkill /F /IM vspaero.exe', () => {});
+                    resolve({ status: 'error', message: `System failed: ${error.message}` });
+                    return;
+                }
 
-          if (result) {
-            if (result.status === 'error') {
-              console.error(`[Stability] Python Error for ${params.designId}:`, result.message);
-              resolve(result);
-              return;
+                resolve({ status: 'error', message: 'No JSON in stdout.' });
             }
-            const store = getDesignStore();
-            store[params.designId] = { ...store[params.designId], stability: result };
-            resolve(result);
-            return;
-          }
+        );
 
-          if (error) {
-            console.error(`[Stability] Hard Crash/Timeout for ${params.designId}:`, error.message);
-            exec('taskkill /F /IM vspaero.exe', () => {});
-            resolve({ status: 'error', message: `System failed: ${error.message}` });
-            return;
-          }
+        proc.stdin.write(JSON.stringify(enrichedParams));
+        proc.stdin.end();
+    });
+}
 
-          resolve({ status: 'error', message: 'Unknown error: no JSON found in output.' });
-        }
-    );
-
-    proc.stdin.write(inputJson);
-    proc.stdin.end();
-  });
+function extractJson(stdout) {
+    try {
+        const s = stdout.indexOf('===JSON_START===');
+        const e = stdout.indexOf('===JSON_END===');
+        if (s !== -1 && e !== -1) return JSON.parse(stdout.substring(s + 16, e).trim());
+        const j = stdout.indexOf('{');
+        if (j !== -1) return JSON.parse(stdout.substring(j).trim());
+    } catch (_) {}
+    return null;
 }

@@ -21,7 +21,7 @@ export default function DesignParametersTable({ designs }) {
 
   const stab = [
     { key: 'staticMargin', label: 'Static Margin (%)', path: 'stability.longitudinal.staticMargin', format: (v) => v?.toFixed(1) || '-' },
-    { key: 'vtvr', label: 'V-Tail Vol Ratio', path: 'stability.directional.vtailVolumeRatio', format: (v) => v?.toFixed(3) || '-' },
+    { key: 'cnBeta', label: 'CN β', path: 'stability.directional.CN_beta', format: (v) => v?.toFixed(4) || '-' },
     { key: 'overallStable', label: 'Stable', path: 'stability.overallStable', format: (v) => (v ? 'Yes' : 'No') },
   ];
 

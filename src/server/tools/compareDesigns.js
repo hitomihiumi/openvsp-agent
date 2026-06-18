@@ -59,14 +59,16 @@ export async function compareDesigns(params) {
       },
       stability: {
         staticMargin: stability.longitudinal?.staticMargin,
-        vtailVolumeRatio: stability.directional?.vtailVolumeRatio,
-        overallStable: stability.overallStable,
+        longitudinalStable: stability.longitudinal?.stable ?? false,
+        directionalStable: stability.directional?.stable ?? false,
+        lateralStable: stability.lateral?.stable ?? false,
+        overallStable: stability.overallStable ?? false,
       },
       requirements: {
         wingspanUnder2m: meetsWingspan,
         stable: meetsStability,
         sufficientLift: meetsLift,
-        allPassed: meetsWingspan && meetsStability && meetsLift,
+        passedAllRequirements: meetsWingspan && meetsStability && meetsLift,
       },
       score: Math.round(score * 100) / 100,
     });

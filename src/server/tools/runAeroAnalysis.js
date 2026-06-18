@@ -3,61 +3,76 @@ import { getPythonScriptPath } from '../../utils/paths.js';
 import { getDesignStore } from '../../utils/designStore.js';
 
 export async function runAeroAnalysis(params) {
-  console.log(`[AeroAnalysis] Starting for ${params.designId}`);
+    console.log('[runAeroAnalysis] called for', params.designId);
 
-  return new Promise((resolve) => {
-    const scriptPath = getPythonScriptPath('run_vspaero.py');
-    const inputJson = JSON.stringify({ ...params }, null, 2);
+    // Pull vspFile / runDir from store if not provided by agent
+    const store   = getDesignStore();
+    const stored  = store[params.designId] || {};
+    const vspFile = params.vspFile || stored.vspFile;
+    const runDir  = params.runDir  || stored.runDir;
+    const p       = stored.parameters || {};
 
-    const proc = execFile(
-        'python',
-        [scriptPath],
-        { timeout: 60000, maxBuffer: 50 * 1024 * 1024 },
-        (error, stdout, stderr) => {
-            console.log(`[AeroAnalysis] Raw stdout for ${params.designId}:`, stdout);
-            let result = null;
+    const enrichedParams = {
+        ...params,
+        vspFile,
+        runDir,
+        wingArea:    params.wingArea    || p.wingArea,
+        wingspan:    params.wingspan    || p.wingspan,
+        wingChord:   params.wingChord   || p.wingChord,
+        wingTipChord: params.wingTipChord || p.wingTipChord,
+    };
 
-            try {
-                const startIdx = stdout.indexOf('===JSON_START===');
-                const endIdx = stdout.indexOf('===JSON_END===');
-                let cleanJson = '';
+    return new Promise((resolve) => {
+        const scriptPath = getPythonScriptPath('run_vspaero.py');
 
-                if (startIdx !== -1 && endIdx !== -1) {
-                    cleanJson = stdout.substring(startIdx + 16, endIdx).trim();
-                } else {
-                    const jsonStart = stdout.indexOf('{');
-                    if (jsonStart !== -1) cleanJson = stdout.substring(jsonStart).trim();
+        const proc = execFile(
+            'python',
+            [scriptPath],
+            {
+                timeout:   120_000,
+                maxBuffer: 50 * 1024 * 1024,
+                cwd:       runDir || process.cwd(),
+            },
+            (error, stdout, stderr) => {
+                if (stderr) console.error('[runAeroAnalysis] stderr:', stderr.slice(0, 400));
+
+                const result = extractJson(stdout);
+
+                if (result) {
+                    if (result.status === 'error') {
+                        console.error('[runAeroAnalysis] Python error:', result.message);
+                        resolve(result);
+                        return;
+                    }
+                    store[params.designId] = { ...stored, aero: result };
+                    resolve(result);
+                    return;
                 }
 
-                if (cleanJson) result = JSON.parse(cleanJson);
-            } catch (err) {}
+                if (error) {
+                    console.error('[runAeroAnalysis] crash/timeout:', error.message);
+                    // Kill any lingering vspaero solver
+                    if (process.platform === 'win32') exec('taskkill /F /IM vspaero.exe', () => {});
+                    resolve({ status: 'error', message: `System failed: ${error.message}` });
+                    return;
+                }
 
-          // 2. Если мы успешно достали JSON (с данными или с ошибкой от Python)
-          if (result) {
-            if (result.status === 'error') {
-              console.error(`[AeroAnalysis] Python Error for ${params.designId}:`, result.message);
-              resolve(result); // Отдаем реальную ошибку агенту!
-              return;
+                resolve({ status: 'error', message: 'No JSON in stdout.' });
             }
-            const store = getDesignStore();
-            store[params.designId] = { ...store[params.designId], aero: result };
-            resolve(result);
-            return;
-          }
+        );
 
-          // 3. Если JSON нет, а ошибка есть (жесткий краш C++, segfault или реальный таймаут)
-          if (error) {
-            console.error(`[AeroAnalysis] Hard Crash/Timeout for ${params.designId}:`, error.message);
-            exec('taskkill /F /IM vspaero.exe', () => {}); // Убиваем зависший решатель
-            resolve({ status: 'error', message: `System failed: ${error.message}` });
-            return;
-          }
+        proc.stdin.write(JSON.stringify(enrichedParams));
+        proc.stdin.end();
+    });
+}
 
-          resolve({ status: 'error', message: 'Unknown error: no JSON found in output.' });
-        }
-    );
-
-    proc.stdin.write(inputJson);
-    proc.stdin.end();
-  });
+function extractJson(stdout) {
+    try {
+        const s = stdout.indexOf('===JSON_START===');
+        const e = stdout.indexOf('===JSON_END===');
+        if (s !== -1 && e !== -1) return JSON.parse(stdout.substring(s + 16, e).trim());
+        const j = stdout.indexOf('{');
+        if (j !== -1) return JSON.parse(stdout.substring(j).trim());
+    } catch (_) {}
+    return null;
 }

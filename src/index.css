@@ -358,7 +358,7 @@ body {
   margin-top: 8px;
 }
 
-.tool-card-label {
+.tool-card-section-label {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -387,6 +387,43 @@ body {
   color: var(--accent);
   font-size: 13px;
   padding: 8px 0;
+}
+
+.tool-card-open-vsp {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.tool-card-open-vsp button {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tool-card-open-vsp button:hover:not(:disabled) {
+  background: var(--accent);
+  color: white;
+}
+
+.tool-card-open-vsp button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.tool-card-open-message {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 /* Reasoning Block */
@@ -631,6 +668,40 @@ body {
 
 .metric-fail .metric-value {
   color: var(--error);
+}
+
+.selected-open-vsp {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.selected-open-vsp button {
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.selected-open-vsp button:hover:not(:disabled) {
+  background: var(--accent);
+  color: white;
+}
+
+.selected-open-vsp button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.open-vsp-message {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 /* Mini Table */

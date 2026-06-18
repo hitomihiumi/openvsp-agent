@@ -90,3 +90,8 @@ typings/
 
 # Electron-Forge
 out/
+
+# IDE / Python cache
+.idea/
+python/__pycache__/
+runs/

@@ -1,139 +1,266 @@
-import { generateText, tool } from 'ai';
+import { generateText, generateObject, tool } from 'ai';
 import { google } from '@ai-sdk/google';
 import { createGeometry } from './createGeometry.js';
 import { runAeroAnalysis } from './runAeroAnalysis.js';
 import { checkStability } from './checkStability.js';
 import { getDesignStore } from '../../utils/designStore.js';
+import { getRunsBasePath } from '../../utils/paths.js';
+import path from 'path';
+import fs from 'fs';
 import { z } from 'zod';
 
-const subAgentTools = {
-    createGeometry: tool({
-        description: 'Create drone geometry in OpenVSP. Returns design ID.',
-        inputSchema: z.object({
-            designId: z.string().describe('Unique identifier for this design variant'),
-            wingspan: z.number().max(2.0).describe('Wing span in meters (max 2.0)'),
-            wingChord: z.number().min(0.05).describe('Wing root chord in meters (0.05-0.5)'),
-            wingTipChord: z.number().min(0.03).describe('Wing tip chord in meters (0.03-0.4)'),
-            wingAirfoil: z.string().describe('Wing airfoil name (e.g. Eppler387, S1223, Selig9260)'),
-            htailArea: z.number().min(0.02).describe('Horizontal tail area in m^2 (0.02-0.3)'),
-            vtailArea: z.number().min(0.01).describe('Vertical tail area in m^2 (0.01-0.15)'),
-            htailArm: z.number().min(0.2).describe('Distance from CG to H-tail quarter chord in meters (0.2-1.0)'),
-            vtailArm: z.number().min(0.2).describe('Distance from CG to V-tail quarter chord in meters (0.2-1.0)'),
-            fuselageLength: z.number().min(0.3).describe('Fuselage length in meters (0.3-2.0)'),
-            fuselageWidth: z.number().min(0.03).describe('Fuselage max width/diameter in meters (0.03-0.3)'),
-            wingPosition: z.number().min(0.05).describe('Wing leading edge x-position relative to nose as fraction of fuselage (0.05-0.6)'),
-            cgPosition: z.number().min(0.1).describe('Center of gravity x-position from nose as fraction of fuselage (0.1-0.7)'),
-            description: z.string().describe('Brief description of design intent'),
+const geometryParamsSchema = z.object({
+    designId: z.string().describe('Unique identifier for this design variant'),
+    aircraftType: z.string().optional().describe(
+        'Aircraft category inferred by the supervisor (e.g., fixed-wing UAV, helicopter, multirotor).'
+    ),
+    wingspan: z.number().min(0.1).max(10.0).describe(
+        'Wing span in meters. Use a value appropriate for the aircraft type and mission.'
+    ),
+    wingChord: z.number().min(0.05).max(2.00).describe(
+        'Wing root chord in meters. For high AR, use smaller chord.'
+    ),
+    wingTipChord: z.number().min(0.02).max(2.00).describe(
+        'Wing tip chord. MUST be <= wingChord. Taper ratio 0.4–0.7 is typical.'
+    ),
+    wingAirfoil: z.string().describe(
+        'Wing airfoil name. Choose an airfoil suitable for the aircraft type and mission.'
+    ),
+    htailArea: z.number().min(0.01).max(2.00).describe(
+        'Horizontal tail area in m². For fixed-wing aircraft typical tail volume coeff 0.35–0.50. '
+        + 'Skip or set 0 for aircraft types without a horizontal tail (e.g., multirotor).'
+    ),
+    vtailArea: z.number().min(0.01).max(2.00).describe(
+        'Vertical tail area in m². For fixed-wing aircraft typical tail volume coeff 0.02–0.05. '
+        + 'Skip or set 0 for aircraft types without a vertical tail.'
+    ),
+    htailArm: z.number().min(0.10).max(5.00).describe(
+        'Distance from CG to H-tail aerodynamic center in meters. '
+        + 'For fixed-wing aircraft: MUST satisfy cgPosition*fuselageLength + htailArm <= fuselageLength.'
+    ),
+    vtailArm: z.number().min(0.10).max(5.00).describe(
+        'Distance from CG to V-tail aerodynamic center in meters. '
+        + 'Same constraint as htailArm. Usually equal to htailArm.'
+    ),
+    fuselageLength: z.number().min(0.20).max(10.00).describe(
+        'Fuselage length in meters. Choose a value appropriate for the aircraft type.'
+    ),
+    fuselageWidth: z.number().min(0.02).max(2.00).describe(
+        'Fuselage max width/diameter in meters. For fixed-wing aircraft keep it slender (8–20% of length).'
+    ),
+    wingPosition: z.number().min(0.05).max(0.80).describe(
+        'Wing LE x-position as fraction of fuselage length from nose. Must be < cgPosition.'
+    ),
+    cgPosition: z.number().min(0.10).max(0.80).describe(
+        'CG x-position as fraction of fuselage length from nose. '
+        + 'For fixed-wing aircraft wing aerodynamic center should be ~5–15% MAC behind CG for stability.'
+    ),
+    description: z.string().describe('Brief description of this design strategy.'),
+});
+
+function buildSubAgentTools(runDir) {
+    return {
+        createGeometry: tool({
+            description: 'Create aircraft geometry in OpenVSP. Returns design ID.',
+            inputSchema: geometryParamsSchema,
+            execute: async (agentParams) => {
+                const result = await createGeometry({ ...agentParams, runDir });
+                if (result?.status === 'error') {
+                    throw new Error(result.message || 'createGeometry failed');
+                }
+                return result;
+            },
         }),
-        execute: createGeometry,
-    }),
-    runAeroAnalysis: tool({
-        description: 'Run VSPAERO aerodynamic analysis. Returns CL, CD, L/D coefficients.',
-        inputSchema: z.object({
-            designId: z.string().describe('Design ID from createGeometry'),
-            alphaStart: z.number().describe('Start angle of attack in degrees (-5 to -2)'),
-            alphaEnd: z.number().describe('End angle of attack in degrees (10 to 15)'),
-            alphaStep: z.number().describe('Angle of attack step in degrees (0.5 to 2.0)'),
-            machNumber: z.number().default(0.065).describe('Mach number at cruise (22 m/s at sea level)'),
+
+        runAeroAnalysis: tool({
+            description: 'Run VSPAERO aerodynamic analysis on the created geometry.',
+            inputSchema: z.object({
+                designId: z.string().describe('Design ID from createGeometry'),
+                alphaStart: z.number().describe('Start AoA in degrees. Use -2 for fixed-wing.'),
+                alphaEnd:   z.number().describe('End AoA in degrees. Use 12 for fixed-wing.'),
+                alphaStep:  z.number().describe('AoA step in degrees. Use 1.'),
+                machNumber: z.number().default(0.065).describe('Mach number. Default 0.065 corresponds to ~22 m/s at sea level.'),
+            }),
+            execute: async (agentParams) => {
+                const result = await runAeroAnalysis({ ...agentParams, runDir });
+                if (result?.status === 'error') {
+                    throw new Error(result.message || 'runAeroAnalysis failed');
+                }
+                return result;
+            },
         }),
-        execute: runAeroAnalysis,
-    }),
-    checkStability: tool({
-        description: 'Check longitudinal, directional, and lateral stability of a design.',
-        inputSchema: z.object({ designId: z.string().describe('Design ID from createGeometry') }),
-        execute: checkStability,
-    }),
-};
+
+        checkStability: tool({
+            description: 'Check longitudinal, directional, and lateral stability via VSPAERO.',
+            inputSchema: z.object({
+                designId: z.string().describe('Design ID from createGeometry'),
+            }),
+            execute: async (agentParams) => {
+                const result = await checkStability({ ...agentParams, runDir });
+                if (result?.status === 'error') {
+                    throw new Error(result.message || 'checkStability failed');
+                }
+                return result;
+            },
+        }),
+    };
+}
+
+function buildSubAgentSystemPrompt(strategy) {
+    return `
+You are an expert aircraft designer and OpenVSP sub-agent. Your task is to design, simulate,
+and evaluate ONE specific aircraft design variant.
+
+Your strategy (provided by the supervisor):
+"${strategy.description}"
+Design ID: ${strategy.designId}
+
+The supervisor has already inferred the aircraft type and mission constraints from the user's request.
+You MUST respect the aircraft type and any numeric limits described in the strategy above.
+If the strategy says the aircraft is a multirotor, helicopter, or other non-fixed-wing type, adapt the
+geometry parameters accordingly (e.g., skip tail surfaces that do not exist for that type).
+
+═════ CRITICAL GEOMETRY RULES (MUST NOT BE VIOLATED) ═════
+
+1. PHYSICALLY REALISTIC FUSELAGE
+   For fixed-wing aircraft, fuselageWidth should be 8–20 % of fuselageLength. No flying saucers.
+   For other aircraft types, use proportions appropriate to that type.
+
+2. TAIL ARMS WITHIN FUSELAGE (fixed-wing only)
+   CG is at cgPosition × fuselageLength from the nose.
+   htailArm must satisfy: cgPosition × fuselageLength + htailArm ≤ fuselageLength × 0.95
+
+3. TIP CHORD ≤ ROOT CHORD (fixed-wing wings)
+   wingTipChord must always be smaller than or equal to wingChord.
+
+4. WING POSITION AHEAD OF CG (fixed-wing)
+   wingPosition < cgPosition (leading edge upstream of centre of gravity).
+
+═════ AERODYNAMIC SIZING GUIDANCE (fixed-wing) ═════
+• Wing area ~ 0.25–0.45 m² for a 1.5 kg payload at 22 m/s (CL ~ 0.4–0.7).
+• Horizontal tail volume coeff ~ 0.35–0.50 (htailVol = htailArea × htailArm / (wingArea × MAC)).
+• Vertical tail volume coeff ~ 0.03–0.06.
+
+Return a concise description of your strategy and the chosen parameters. Do NOT make up performance numbers.
+`;
+}
 
 export async function delegateExploration(params) {
     const { strategies } = params;
+    const runsBase = getRunsBasePath();
 
-    // Изменено сообщение в логе, чтобы понимать, что запуск теперь последовательный
     console.log(`[Supervisor] Launching ${strategies.length} sub-agents sequentially...`);
-    console.log(`[Supervisor] Strategies:`, JSON.stringify(strategies, null, 2));
 
     const results = [];
 
-    // ИСПРАВЛЕНИЕ: Используем цикл for...of вместо Promise.all
     for (const strategy of strategies) {
-        const subAgentSystemPrompt = `
-      You are an independent OpenVSP Sub-agent. Your task is to implement, simulate, 
-      and check the stability of a specific drone design strategy.
+        const runDir = path.join(runsBase, `run_${strategy.designId}`);
+        fs.mkdirSync(runDir, { recursive: true });
+        const subAgentTools = buildSubAgentTools(runDir);
+        const systemPrompt = buildSubAgentSystemPrompt(strategy);
 
-      Your specific design strategy is:
-      "${strategy.description}"
-      Design ID to use: ${strategy.designId}
-
-      CRITICAL: Generate DISTINCT parameters that match your specific strategy.
-      Different strategies MUST use different wingspan, wingChord, airfoil, tail areas, etc.
-      For example, a "high speed" strategy should use small wingspan + small wing area,
-      while a "long endurance" strategy should use large wingspan + high aspect ratio.
-
-      You must perform exactly three steps:
-      1. Call createGeometry using parameters that are UNIQUE to your strategy.
-      2. Call runAeroAnalysis on the created geometry.
-      3. Call checkStability on the created geometry.
-
-      Conclude by returning a brief text summary of whether the design was successful.
-    `;
+        let geometryResult = null;
+        let aeroResult = null;
+        let stabilityResult = null;
+        let summaryText = '';
+        let failureReason = null;
 
         try {
-            const result = await generateText({
+            // Step 1: Ask the sub-agent to choose geometry parameters.
+            console.log(`[Sub-agent ${strategy.designId}] Choosing geometry parameters...`);
+            const paramsResult = await generateObject({
                 model: google('gemini-3.1-flash-lite-preview'),
-                system: subAgentSystemPrompt,
-                prompt: `Start executing the strategy for ${strategy.designId}.`,
-                tools: subAgentTools,
-                stopWhen: ({ steps }) => steps.length >= 8,
-                onStepFinish: (step) => {
-                    console.log(`[Sub-agent ${strategy.designId}] === Step ${step.stepNumber} ===`);
-                    console.log(`[Sub-agent ${strategy.designId}] finishReason:`, step.finishReason);
-                    console.log(`[Sub-agent ${strategy.designId}] text length:`, step.text?.length || 0);
-                    const calls = step.toolCalls.map(tc => ({ toolName: tc.toolName, input: tc.input }));
-                    console.log(`[Sub-agent ${strategy.designId}] toolCalls:`, JSON.stringify(calls));
-                    const results = step.toolResults.map(tr => ({ toolName: tr.toolName, status: tr.result?.status || 'ok' }));
-                    console.log(`[Sub-agent ${strategy.designId}] toolResults:`, JSON.stringify(results));
-                },
+                system: systemPrompt,
+                prompt: `Generate geometry parameters for design "${strategy.designId}" that match the strategy above. Return a valid JSON object with all required fields.`,
+                schema: geometryParamsSchema,
+                maxRetries: 2,
             });
 
-            console.log(`[Sub-agent ${strategy.designId}] generateText finished. steps:`, result.steps?.length || 0, 'finishReason:', result.finishReason, 'text length:', result.text?.length || 0);
+            const geometryParams = { ...paramsResult.object, designId: strategy.designId };
+            console.log(`[Sub-agent ${strategy.designId}] Params:`, JSON.stringify(geometryParams, null, 2));
 
-            const summaryText = result.text || (() => {
-                const steps = result.steps || [];
-                const allCalls = steps.flatMap(s => s.toolCalls || []);
-                const allResults = steps.flatMap(s => s.toolResults || []);
-                const completed = allCalls.map(tc => tc.toolName).join(', ');
-                return `Design ${strategy.designId} completed. Tools used: ${completed || 'none'}. Steps: ${steps.length}. Finish reason: ${result.finishReason}`;
-            })();
+            // Step 2: Create geometry (manual call — guaranteed to execute).
+            console.log(`[Sub-agent ${strategy.designId}] Creating geometry...`);
+            geometryResult = await subAgentTools.createGeometry.execute(geometryParams);
+            console.log(`[Sub-agent ${strategy.designId}] Geometry status:`, geometryResult.status);
 
-            console.log(`[Sub-agent ${strategy.designId}] Final:`, summaryText);
-
-            // Добавляем результат в массив
-            results.push({
+            // Step 3: Run aerodynamic analysis (manual call).
+            console.log(`[Sub-agent ${strategy.designId}] Running aero analysis...`);
+            aeroResult = await subAgentTools.runAeroAnalysis.execute({
                 designId: strategy.designId,
-                status: 'completed',
-                agentSummary: summaryText
+                alphaStart: -2,
+                alphaEnd: 12,
+                alphaStep: 1,
+                machNumber: 0.065,
             });
+            console.log(`[Sub-agent ${strategy.designId}] Aero status:`, aeroResult.status, 'maxLD:', aeroResult.maxLD);
+
+            // Step 4: Check stability (manual call).
+            console.log(`[Sub-agent ${strategy.designId}] Checking stability...`);
+            stabilityResult = await subAgentTools.checkStability.execute({ designId: strategy.designId });
+            console.log(`[Sub-agent ${strategy.designId}] Stability status:`, stabilityResult.status, 'overallStable:', stabilityResult.overallStable);
+
+            // Step 5: Generate final summary from the real results.
+            const summaryResult = await generateText({
+                model: google('gemini-3.1-flash-lite-preview'),
+                system: systemPrompt,
+                prompt: `
+Design ${strategy.designId} has been created and analyzed. Write a 3-sentence summary using ONLY the real data below.
+Do not invent numbers.
+
+Geometry: ${JSON.stringify(geometryResult.parameters || {}, null, 2)}
+Aero: maxLD=${aeroResult.maxLD}, cruiseCL=${aeroResult.cruiseCL}, maxCL=${aeroResult.maxCL}
+Stability: overallStable=${stabilityResult.overallStable}, staticMargin=${stabilityResult.longitudinal?.staticMargin}
+`,
+                maxSteps: 2,
+            });
+            summaryText = summaryResult.text || `Design ${strategy.designId} completed.`;
+            console.log(`[Sub-agent ${strategy.designId}] Summary:`, summaryText);
         } catch (err) {
-            console.error(`[Sub-agent ${strategy.designId}] Error:`, err);
-            results.push({ designId: strategy.designId, status: 'failed', error: err.message });
+            failureReason = err.message || String(err);
+            console.error(`[Sub-agent ${strategy.designId}] Error:`, failureReason);
         }
+
+        results.push({
+            designId:     strategy.designId,
+            status:       failureReason ? 'failed' : 'completed',
+            agentSummary: summaryText || failureReason,
+            error:        failureReason,
+        });
     }
 
-    // Attach stored design data to each result so the React store can pick it up
     const store = getDesignStore();
     const designsWithData = results.map(r => {
         const stored = store[r.designId];
-        if (!stored) return r;
+        if (!stored) return { ...r, status: 'failed', error: r.error || 'No data returned from sub-agent' };
+
+        const missing = [];
+        if (!stored.parameters) missing.push('parameters');
+        if (!stored.aero) missing.push('aero');
+        if (!stored.stability) missing.push('stability');
+
+        if (missing.length > 0) {
+            return {
+                ...r,
+                status: 'failed',
+                error:  r.error || `Incomplete sub-agent execution. Missing: ${missing.join(', ')}`,
+                parameters: stored.parameters || null,
+                aero:       stored.aero       || null,
+                stability:  stored.stability  || null,
+            };
+        }
+
         return {
             ...r,
             parameters: stored.parameters || null,
-            aero: stored.aero || null,
-            stability: stored.stability || null,
+            aero:       stored.aero       || null,
+            stability:  stored.stability  || null,
         };
     });
 
+    const succeeded = designsWithData.filter(r => r.status === 'completed').length;
     return {
-        message: `Sequential exploration complete. ${results.filter(r => r.status === 'completed').length} sub-agents finished successfully.`,
-        agentReports: designsWithData
+        message: `Sequential exploration complete. ${succeeded}/${designsWithData.length} sub-agents succeeded.`,
+        agentReports: designsWithData,
     };
 }

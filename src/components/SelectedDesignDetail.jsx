@@ -1,7 +1,27 @@
+import React from 'react';
+import { useDesignStore } from '../hooks/useDesignStore';
+
 export default function SelectedDesignDetail({ report }) {
   if (!report || !report.selectedDesignSummary) return null;
 
   const sel = report.selectedDesignSummary;
+  const selectedVspFile = useDesignStore((s) => s.designs[sel.designId]?.vspFile);
+  const [openMessage, setOpenMessage] = React.useState(null);
+  const [opening, setOpening] = React.useState(false);
+
+  const handleOpenVsp = async () => {
+    if (!selectedVspFile) return;
+    setOpening(true);
+    setOpenMessage(null);
+    try {
+      const res = await window.api.openInVSP(selectedVspFile);
+      setOpenMessage(res.message);
+    } catch (err) {
+      setOpenMessage(err?.message || 'Failed to open OpenVSP');
+    } finally {
+      setOpening(false);
+    }
+  };
 
   return (
     <div className="selected-design">
@@ -36,6 +56,15 @@ export default function SelectedDesignDetail({ report }) {
         </div>
       </div>
 
+      {selectedVspFile && (
+        <div className="selected-open-vsp">
+          <button onClick={handleOpenVsp} disabled={opening}>
+            {opening ? 'Opening…' : 'Open selected design in OpenVSP GUI'}
+          </button>
+          {openMessage && <span className="open-vsp-message">{openMessage}</span>}
+        </div>
+      )}
+
       {report.allDesignsSummary && report.allDesignsSummary.length > 1 && (
         <div className="selected-comparison">
           <h4>Why better than alternatives</h4>
@@ -59,7 +88,7 @@ export default function SelectedDesignDetail({ report }) {
                   <td>{d.maxLD?.toFixed(1)}</td>
                   <td>{d.wingspan?.toFixed(2)} m</td>
                   <td>{d.longitudinalStable ? 'Yes' : 'No'}</td>
-                  <td>{d.passedAll ? 'Yes' : 'No'}</td>
+                  <td>{d.passedAllRequirements ? 'Yes' : 'No'}</td>
                 </tr>
               ))}
             </tbody>

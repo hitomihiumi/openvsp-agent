@@ -1,5 +1,11 @@
 import { useState } from 'react';
 
+function extractVspFile(result) {
+  if (!result) return null;
+  if (typeof result === 'string') return null;
+  return result.parameters?.vspFile || result.vspFile || null;
+}
+
 const TOOL_LABELS = {
   'delegateExploration': 'Delegate Exploration',
   'createGeometry': 'Create Geometry',
@@ -25,6 +31,34 @@ function getSummary(invocation) {
     return 'Done';
   }
   return 'Pending';
+}
+
+function OpenVspButton({ vspFile }) {
+  const [state, setState] = useState({ loading: false, message: null });
+
+  const handleOpen = async () => {
+    if (!vspFile || state.loading) return;
+    setState({ loading: true, message: null });
+    try {
+      const res = await window.api.openInVSP(vspFile);
+      setState({ loading: false, message: res.message });
+    } catch (err) {
+      setState({ loading: false, message: err?.message || 'Failed to open OpenVSP' });
+    }
+  };
+
+  return (
+    <div className="tool-card-open-vsp">
+      <button onClick={handleOpen} disabled={state.loading}>
+        {state.loading ? (
+          <><span className="spinner-small" /> Opening OpenVSP…</>
+        ) : (
+          'Open in OpenVSP GUI'
+        )}
+      </button>
+      {state.message && <span className="tool-card-open-message">{state.message}</span>}
+    </div>
+  );
 }
 
 export default function ToolCallCard({ part }) {
@@ -62,7 +96,7 @@ export default function ToolCallCard({ part }) {
             <div className="tool-card-body">
               {args && (
                   <div className="tool-card-section">
-                    <div className="tool-card-label">Parameters</div>
+                    <div className="tool-card-section-label">Parameters</div>
                     <pre className="tool-card-code">
                 {JSON.stringify(args, null, 2)}
               </pre>
@@ -70,10 +104,15 @@ export default function ToolCallCard({ part }) {
               )}
               {isComplete && result && (
                   <div className="tool-card-section">
-                    <div className="tool-card-label">Result</div>
+                    <div className="tool-card-section-label">Result</div>
                     <pre className="tool-card-code">
                 {typeof result === 'string' ? result : JSON.stringify(result, null, 2)}
               </pre>
+                  </div>
+              )}
+              {isComplete && rawToolName === 'createGeometry' && extractVspFile(result) && (
+                  <div className="tool-card-section">
+                    <OpenVspButton vspFile={extractVspFile(result)} />
                   </div>
               )}
               {isRunning && (
