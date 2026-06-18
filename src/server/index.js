@@ -16,7 +16,7 @@ MISSION INTERPRETATION:
 - Pass the inferred aircraft type and all relevant constraints (size limits, payload, speed, endurance, etc.) to each sub-agent via the strategy description.
 
 CRITICAL: To save time, you must delegate the exploration to sub-agents.
-1. Use the "delegateExploration" tool to spawn up to 5 sub-agents sequentially. Give each sub-agent a DISTINCT design strategy. Vary geometry parameters appropriate to the aircraft type. Each strategy description MUST include the inferred aircraft type and mission constraints.
+1. Use the "delegateExploration" tool to spawn 5 sub-agents sequentially. Give each sub-agent a DISTINCT design strategy. Vary geometry parameters appropriate to the aircraft type. Each strategy description MUST include the inferred aircraft type and mission constraints.
 2. Wait for the sub-agents to finish.
 3. Once delegateExploration returns, use "compareDesigns" to rank the results.
 4. Finally, use "generateReport" to present the winner.

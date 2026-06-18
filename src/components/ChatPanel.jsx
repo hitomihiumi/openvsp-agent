@@ -87,23 +87,29 @@ export default function ChatPanel({ serverPort }) {
           case 'compareDesigns':
             if (result.designs && Array.isArray(result.designs)) {
               result.designs.forEach(d => {
-                if (d.designId) {
-                  addDesign(d.designId, {
-                    designId: d.designId,
-                    description: d.description,
-                    parameters: d.parameters,
-                    aero: d.performance ? {
-                      maxLD: d.performance.maxLD,
-                      maxLD_alpha: d.performance.maxLD_alpha,
-                      cruiseCL: d.performance.cruiseCL,
-                      maxCL: d.performance.maxCL
-                    } : undefined,
-                    stability: d.stability ? {
-                      overallStable: d.stability.overallStable,
-                      longitudinal: { staticMargin: d.stability.staticMargin },
-                      directional: { vtailVolumeRatio: d.stability.vtailVolumeRatio }
-                    } : undefined
-                  });
+                if (!d.designId) return;
+                const existing = useDesignStore.getState().designs[d.designId];
+                const payload = {
+                  designId: d.designId,
+                  description: d.description,
+                  parameters: d.parameters,
+                  requirements: d.requirements,
+                  score: d.score,
+                  rank: d.rank,
+                  aero: d.performance ? {
+                    maxLD: d.performance.maxLD,
+                    maxLD_alpha: d.performance.maxLD_alpha,
+                    cruiseCL: d.performance.cruiseCL,
+                    maxCL: d.performance.maxCL
+                  } : undefined,
+                  // Preserve the full stability object from checkStability; only fall
+                  // back to the compare result's summary if it was missing.
+                  stability: existing?.stability || d.stability || undefined,
+                };
+                if (existing) {
+                  updateDesign(d.designId, payload);
+                } else {
+                  addDesign(d.designId, payload);
                 }
               });
             }

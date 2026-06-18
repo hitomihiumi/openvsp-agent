@@ -24,14 +24,29 @@ def _col(res_id, data_names, label):
     return []
 
 
-def _sweep(name, sweep_params, wing_area, wingspan, mac):
+def _latest_polar_id():
+    """Return the most recent VSPAERO_Polar result set ID, if any."""
+    try:
+        return vsp.FindLatestResultsID('VSPAERO_Polar')
+    except Exception:
+        for name in reversed(vsp.GetAllResultsNames()):
+            if name == 'VSPAERO_Polar':
+                return vsp.FindResultsID(name)
+    return None
+
+
+def _run_sweep(name, sweep_params, wing_area, wingspan, mac, cg_x=0.0):
+    """Configure and execute a VSPAERO sweep and return the polar result ID + data names."""
     vsp.SetAnalysisInputDefaults(name)
-    vsp.SetIntAnalysisInput(name, 'WakeNumIter',    [3], 0)
-    vsp.SetIntAnalysisInput(name, 'GeomSet',        [vsp.SET_NONE], 0)
-    vsp.SetIntAnalysisInput(name, 'ThinGeomSet',    [1],            0)
-    vsp.SetDoubleAnalysisInput(name, 'Sref', [wing_area], 0)
-    vsp.SetDoubleAnalysisInput(name, 'bref', [wingspan],  0)
-    vsp.SetDoubleAnalysisInput(name, 'cref', [mac],       0)
+    vsp.SetIntAnalysisInput(name, 'WakeNumIter', [3], 0)
+    vsp.SetIntAnalysisInput(name, 'GeomSet',     [vsp.SET_NONE], 0)
+    vsp.SetIntAnalysisInput(name, 'ThinGeomSet', [1],            0)
+    vsp.SetDoubleAnalysisInput(name, 'Sref',  [wing_area], 0)
+    vsp.SetDoubleAnalysisInput(name, 'bref',  [wingspan],  0)
+    vsp.SetDoubleAnalysisInput(name, 'cref',  [mac],       0)
+    vsp.SetDoubleAnalysisInput(name, 'Xcg',  [cg_x],      0)
+    vsp.SetDoubleAnalysisInput(name, 'Ycg',  [0.0],       0)
+    vsp.SetDoubleAnalysisInput(name, 'Zcg',  [0.0],       0)
     for k, v_list in sweep_params.items():
         sample = v_list[0] if v_list else None
         if isinstance(sample, float):
@@ -39,10 +54,9 @@ def _sweep(name, sweep_params, wing_area, wingspan, mac):
         elif isinstance(sample, int):
             vsp.SetIntAnalysisInput(name, k, v_list, 0)
     vsp.ExecAnalysis(name)
-    names = vsp.GetAllResultsNames()
-    if 'VSPAERO_Polar' not in names:
+    rid = _latest_polar_id()
+    if rid is None:
         return None, []
-    rid = vsp.FindResultsID('VSPAERO_Polar')
     return rid, vsp.GetAllDataNames(rid)
 
 
@@ -54,6 +68,7 @@ def check_stability(params):
     wing_chord = float(params.get('wingChord', 0.0))
     wing_tip   = float(params.get('wingTipChord', 0.0))
     wing_area  = float(params.get('wingArea', 0.0))
+    cg_x       = float(params.get('cgX', 0.0))
 
     if wing_area <= 0:
         wing_area = 0.25 * wingspan * (wing_chord + wing_tip) if wingspan > 0 else 0.3
@@ -68,7 +83,7 @@ def check_stability(params):
     if wing_area <= 0:
         wing_area = wingspan * mac
 
-    # ── Resolve vsp3 path (same logic as run_vspaero) ──────────────────
+    # Resolve vsp3 path (same logic as run_vspaero)
     vsp_file = params.get('vspFile')
     if not vsp_file:
         run_dir  = params.get('runDir') or os.path.abspath(f"run_{design_id}")
@@ -86,38 +101,29 @@ def check_stability(params):
     try:
         vsp.ReadVSPFile(vsp_file)
 
-        # Remove solid bodies that VLM cannot mesh properly
-        for gid in vsp.FindGeoms():
-            try:
-                geom_type = vsp.GetGeomTypeName(gid)
-                name = (vsp.GetGeomName(gid) or '').lower()
-                if geom_type == 'FUSELAGE' or name == 'fuselage':
-                    vsp.DeleteGeom(gid)
-            except Exception:
-                pass
-        vsp.Update()
-
         # Mesh
         cg = 'VSPAEROComputeGeometry'
         vsp.SetAnalysisInputDefaults(cg)
-        vsp.SetIntAnalysisInput(cg, 'GeomSet',        [vsp.SET_NONE], 0)
-        vsp.SetIntAnalysisInput(cg, 'ThinGeomSet',    [1],            0)  # default active set
+        vsp.SetIntAnalysisInput(cg, 'GeomSet',     [vsp.SET_NONE], 0)
+        vsp.SetIntAnalysisInput(cg, 'ThinGeomSet', [1],            0)
         vsp.ExecAnalysis(cg)
 
         sweep = 'VSPAEROSweep'
 
-        # ── Longitudinal (alpha sweep) ──────────────────────────────────
-        rid_a, dn_a = _sweep(sweep, {
-            'AlphaStart': [-2.0], 'AlphaEnd': [2.0], 'AlphaNpts': [5],
-            'BetaStart':  [0.0],  'BetaEnd':  [0.0], 'BetaNpts':  [1],
-            'MachStart':  [0.065], 'MachEnd': [0.065], 'MachNpts': [1],
-        }, wing_area, wingspan, mac)
+        # Longitudinal (alpha sweep)
+        rid_a, dn_a = _run_sweep(sweep, {
+            'AlphaStart': [-2.0],  'AlphaEnd': [2.0], 'AlphaNpts': [5],
+            'BetaStart':  [0.0],   'BetaEnd':  [0.0], 'BetaNpts':  [1],
+            'MachStart':  [0.065], 'MachEnd':  [0.065], 'MachNpts': [1],
+        }, wing_area, wingspan, mac, cg_x)
         if rid_a is None:
             raise Exception("Alpha sweep returned no results.")
 
         alphas = _col(rid_a, dn_a, 'Alpha')
         cls    = _col(rid_a, dn_a, 'CLtot') or _col(rid_a, dn_a, 'CL')
         cms    = _col(rid_a, dn_a, 'CMytot') or _col(rid_a, dn_a, 'CMy') or _col(rid_a, dn_a, 'Cm')
+        if not cms:
+            cms = _col(rid_a, dn_a, 'CMpitch')
 
         cl_alpha = cm_alpha = 0.0
         if len(alphas) >= 2 and abs(alphas[-1] - alphas[0]) > 1e-6:
@@ -128,18 +134,18 @@ def check_stability(params):
         static_margin = -(cm_alpha / cl_alpha) * 100.0 if abs(cl_alpha) > 1e-6 else 0.0
         long_stable   = (cm_alpha < 0) and (static_margin > 0)
 
-        # ── Directional / lateral (beta sweep) ─────────────────────────
-        rid_b, dn_b = _sweep(sweep, {
-            'AlphaStart': [0.0],   'AlphaEnd': [0.0],  'AlphaNpts': [1],
-            'BetaStart':  [-3.0],  'BetaEnd':  [3.0],  'BetaNpts':  [7],
-            'MachStart':  [0.065], 'MachEnd':  [0.065],'MachNpts':  [1],
-        }, wing_area, wingspan, mac)
+        # Directional / lateral (beta sweep)
+        rid_b, dn_b = _run_sweep(sweep, {
+            'AlphaStart': [0.0],   'AlphaEnd': [0.0], 'AlphaNpts': [1],
+            'BetaStart':  [-3.0],  'BetaEnd':  [3.0], 'BetaNpts':  [7],
+            'MachStart':  [0.065], 'MachEnd':  [0.065], 'MachNpts': [1],
+        }, wing_area, wingspan, mac, cg_x)
         if rid_b is None:
             raise Exception("Beta sweep returned no results.")
 
         betas    = _col(rid_b, dn_b, 'Beta')
-        cns      = _col(rid_b, dn_b, 'CNtot') or _col(rid_b, dn_b, 'CN') or _col(rid_b, dn_b, 'CNz')
-        cls_roll = _col(rid_b, dn_b, 'Cltot') or _col(rid_b, dn_b, 'Cl')
+        cns      = _col(rid_b, dn_b, 'CMztot') or _col(rid_b, dn_b, 'CNtot') or _col(rid_b, dn_b, 'CN') or _col(rid_b, dn_b, 'CNz')
+        cls_roll = _col(rid_b, dn_b, 'CMxtot') or _col(rid_b, dn_b, 'Cltot') or _col(rid_b, dn_b, 'Cl')
 
         cn_beta = cl_beta = 0.0
         if len(betas) >= 2 and abs(betas[-1] - betas[0]) > 1e-6:
@@ -147,7 +153,10 @@ def check_stability(params):
             cn_beta = (cns[-1]      - cns[0])      / db if cns      else 0.0
             cl_beta = (cls_roll[-1] - cls_roll[0]) / db if cls_roll else 0.0
 
-        dir_stable = cn_beta > 0
+        # OpenVSP/VSPAERO uses the convention: positive beta = nose right.
+        # A directionally stable aircraft therefore generates a negative
+        # yawing moment (nose left) for positive sideslip -> CN_beta < 0.
+        dir_stable = cn_beta < 0
         lat_stable = cl_beta < 0
 
         return {

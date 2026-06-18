@@ -15,6 +15,13 @@ const TOOL_LABELS = {
   'generateReport': 'Generate Report',
 };
 
+const SUB_STEP_ORDER = ['createGeometry', 'runAeroAnalysis', 'checkStability'];
+const SUB_STEP_LABELS = {
+  'createGeometry': 'Create Geometry',
+  'runAeroAnalysis': 'Aero Analysis',
+  'checkStability': 'Stability Check',
+};
+
 function getSummary(invocation) {
   const state = invocation.state;
   if (state === 'call') return 'Running...';
@@ -61,6 +68,81 @@ function OpenVspButton({ vspFile }) {
   );
 }
 
+function DelegateSubSteps({ args, result, isRunning, isComplete }) {
+  const strategies = args?.strategies || [];
+  const reports = result?.agentReports || [];
+
+  if (!isRunning && !isComplete) return null;
+
+  return (
+    <div className="tool-card-section">
+      <div className="tool-card-section-label">Sub-agent steps</div>
+      <div className="delegate-sub-steps">
+        {strategies.map((strategy, idx) => {
+          const report = reports.find((r) => r.designId === strategy.designId);
+          const vspFile = extractVspFile(report);
+          const status = report
+            ? report.status === 'completed'
+              ? 'complete'
+              : 'error'
+            : 'pending';
+
+          return (
+            <div key={strategy.designId} className={`delegate-design ${status}`}>
+              <div className="delegate-design-header">
+                <span className="delegate-design-id">{strategy.designId}</span>
+                <span className="delegate-design-status">
+                  {status === 'complete' && '\u2713'}
+                  {status === 'error' && '\u2717'}
+                  {status === 'pending' && '\u2026'}
+                </span>
+              </div>
+              <div className="delegate-design-summary">{strategy.description}</div>
+              <div className="delegate-design-steps">
+                {SUB_STEP_ORDER.map((step) => {
+                  const stepResult = report?.[step === 'createGeometry' ? 'parameters' : step === 'runAeroAnalysis' ? 'aero' : 'stability'];
+                  const stepStatus = isRunning
+                    ? 'running'
+                    : stepResult
+                    ? 'complete'
+                    : 'pending';
+                  const stepLabel = SUB_STEP_LABELS[step];
+                  let stepDetail = '';
+                  if (step === 'runAeroAnalysis' && stepResult?.maxLD !== undefined) {
+                    stepDetail = `L/D=${stepResult.maxLD.toFixed(1)}`;
+                  } else if (step === 'checkStability' && stepResult?.overallStable !== undefined) {
+                    stepDetail = stepResult.overallStable ? 'STABLE' : 'UNSTABLE';
+                  }
+
+                  return (
+                    <div key={step} className={`delegate-step ${stepStatus}`}>
+                      <span className="delegate-step-status">
+                        {stepStatus === 'running' && <span className="spinner-small" />}
+                        {stepStatus === 'complete' && '\u2713'}
+                        {stepStatus === 'pending' && '\u2026'}
+                      </span>
+                      <span className="delegate-step-label">{stepLabel}</span>
+                      {stepDetail && <span className="delegate-step-detail">{stepDetail}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+              {isComplete && vspFile && (
+                <div className="delegate-design-vsp">
+                  <OpenVspButton vspFile={vspFile} />
+                </div>
+              )}
+              {isComplete && report?.error && (
+                <div className="delegate-design-error">{report.error}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function ToolCallCard({ part }) {
   const invocation = part.type === 'tool-invocation' ? part.toolInvocation : part;
   const [expanded, setExpanded] = useState(false);
@@ -94,7 +176,7 @@ export default function ToolCallCard({ part }) {
 
         {expanded && (
             <div className="tool-card-body">
-              {args && (
+              {args && rawToolName !== 'delegateExploration' && (
                   <div className="tool-card-section">
                     <div className="tool-card-section-label">Parameters</div>
                     <pre className="tool-card-code">
@@ -102,7 +184,15 @@ export default function ToolCallCard({ part }) {
               </pre>
                   </div>
               )}
-              {isComplete && result && (
+              {rawToolName === 'delegateExploration' && (
+                <DelegateSubSteps
+                  args={args}
+                  result={result}
+                  isRunning={isRunning}
+                  isComplete={isComplete}
+                />
+              )}
+              {isComplete && rawToolName !== 'delegateExploration' && result && (
                   <div className="tool-card-section">
                     <div className="tool-card-section-label">Result</div>
                     <pre className="tool-card-code">
@@ -115,7 +205,7 @@ export default function ToolCallCard({ part }) {
                     <OpenVspButton vspFile={extractVspFile(result)} />
                   </div>
               )}
-              {isRunning && (
+              {isRunning && rawToolName !== 'delegateExploration' && (
                   <div className="tool-card-section tool-card-loading">
                     <span className="spinner-small" />
                     <span>Executing...</span>

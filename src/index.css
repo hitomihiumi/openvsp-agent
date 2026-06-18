@@ -426,6 +426,122 @@ body {
   color: var(--text-secondary);
 }
 
+/* Delegate Exploration sub-steps */
+.delegate-sub-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.delegate-design {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.delegate-design.complete {
+  border-left: 3px solid #22c55e;
+}
+
+.delegate-design.error {
+  border-left: 3px solid #ef4444;
+}
+
+.delegate-design.pending {
+  border-left: 3px solid var(--text-muted);
+}
+
+.delegate-design-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.delegate-design-id {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.delegate-design-status {
+  font-size: 14px;
+}
+
+.delegate-design.complete .delegate-design-status {
+  color: #22c55e;
+}
+
+.delegate-design.error .delegate-design-status {
+  color: #ef4444;
+}
+
+.delegate-design-summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.delegate-design-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.delegate-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.delegate-step-status {
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.delegate-step.complete {
+  color: var(--text-primary);
+}
+
+.delegate-step.complete .delegate-step-status {
+  color: #22c55e;
+}
+
+.delegate-step.running {
+  color: var(--text-secondary);
+}
+
+.delegate-step.pending {
+  color: var(--text-muted);
+}
+
+.delegate-step-detail {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.delegate-design-vsp {
+  margin-top: 8px;
+}
+
+.delegate-design-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #ef4444;
+}
+
 /* Reasoning Block */
 .reasoning-block {
   margin: 6px 0;

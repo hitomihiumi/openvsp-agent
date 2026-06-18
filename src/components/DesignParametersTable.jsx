@@ -22,7 +22,7 @@ export default function DesignParametersTable({ designs }) {
   const stab = [
     { key: 'staticMargin', label: 'Static Margin (%)', path: 'stability.longitudinal.staticMargin', format: (v) => v?.toFixed(1) || '-' },
     { key: 'cnBeta', label: 'CN β', path: 'stability.directional.CN_beta', format: (v) => v?.toFixed(4) || '-' },
-    { key: 'overallStable', label: 'Stable', path: 'stability.overallStable', format: (v) => (v ? 'Yes' : 'No') },
+    { key: 'overallStable', label: 'Stable', path: 'stability.overallStable', format: (v, d) => ((v ?? d.requirements?.stable) ? 'Yes' : 'No') },
   ];
 
   const getValue = (design, path) => {
@@ -66,7 +66,7 @@ export default function DesignParametersTable({ designs }) {
                 <tr key={p.key}>
                   <td>{p.label}</td>
                   {designs.map((d) => (
-                    <td key={d.designId}>{p.format(getValue(d, p.path))}</td>
+                    <td key={d.designId}>{p.format(getValue(d, p.path), d)}</td>
                   ))}
                 </tr>
               ))}

@@ -129,7 +129,7 @@ def create_drone_geometry(params):
             vsp.SetParmVal(vtail_id, 'X_Rel_Rotation',  'XForm',  90.0)
             vsp.SetParmVal(vtail_id, 'X_Rel_Location',  'XForm',  vtail_x)
             vsp.SetParmVal(vtail_id, 'Y_Rel_Location',  'XForm',  0.0)
-            vsp.SetParmVal(vtail_id, 'Z_Rel_Location',  'XForm',  fuse_width / 2.0)
+            vsp.SetParmVal(vtail_id, 'Z_Rel_Location',  'XForm',  0.01)
 
         vsp.Update()
 

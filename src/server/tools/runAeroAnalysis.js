@@ -20,6 +20,7 @@ export async function runAeroAnalysis(params) {
         wingspan:    params.wingspan    || p.wingspan,
         wingChord:   params.wingChord   || p.wingChord,
         wingTipChord: params.wingTipChord || p.wingTipChord,
+        cgX:         params.cgX         || p.cgX,
     };
 
     return new Promise((resolve) => {
